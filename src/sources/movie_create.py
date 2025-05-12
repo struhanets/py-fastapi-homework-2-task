@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database.models import MovieModel
 from database.models import CountryModel
@@ -27,14 +28,15 @@ async def get_or_create_entity(model, names, db: AsyncSession):
 
 
 # Перевіряємо наявність країни в БД, якщо немає - створюємо
-async def get_or_create_country(name, code, db: AsyncSession):
-    get_country = await db.execute(select(CountryModel).where(CountryModel.name == name))
-    country = get_country.scalar_one_or_none()
-    if country:
-        return country
+async def get_or_create_country(code: str, name: None, db: AsyncSession):
+    get_country = await db.execute(select(CountryModel).where(CountryModel.code == code))
+    countries = get_country.scalars().all()
+    if countries:
+        return countries[0]
 
     new_country = CountryModel(name=name, code=code)
     db.add(new_country)
+    await db.flush()
     return new_country
 
 
@@ -79,7 +81,18 @@ def create_movie_instance(
 
 
 async def get_movie_or_404(movie_id: int, db: AsyncSession):
-    movie = await db.get(MovieModel, movie_id)
+    stmt = (
+        select(MovieModel)
+        .where(MovieModel.id == movie_id)
+        .options(
+            selectinload(MovieModel.genres),
+            selectinload(MovieModel.actors),
+            selectinload(MovieModel.languages),
+            selectinload(MovieModel.country),
+        )
+    )
+    result = await db.execute(stmt)
+    movie = result.scalar_one_or_none()
 
     if not movie:
         raise HTTPException(status_code=404, detail="Movie with the given ID was not found.")
